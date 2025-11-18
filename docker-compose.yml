@@ -20,18 +20,20 @@ services:
       retries: 30
 
   web:
-    image: ghcr.io/kevinwells22/jobdash-custom:1.0.0
+    #image: ghcr.io/kevinwells22/jobdash-custom:1.0.0
+    build: ./web
     container_name: jobdash-web
     restart: unless-stopped
     depends_on:
       db:
-	condition: service_healthy
+        condition: service_healthy
     environment:
       DB_HOST: "db"
       DB_PORT: "3306"
       DB_USER: "jobdash"
       DB_PASS: "jobdashpass"
       DB_NAME: "jobdash"
+      BASE_PATH: "/jobdash"
       # CHANGE THIS to a long random string and share only with admins
       ADMIN_TOKEN: "Bluray601"
     ports:

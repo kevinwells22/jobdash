@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Job Queue</title>
+  <title>n8n Job Queue</title>
   <style>
     :root{--bg:#0f172a;--bg2:#0b1220;--text:#e5e7eb;--line:#1f2937}
     body{
@@ -53,12 +53,36 @@
     }
   </style>
   <script>
+    // Determine base path dynamically based on where the page is served.
+    // If served at "http://host/jobdash/" => BASE = "/jobdash"
+    // If served at "http://host/"        => BASE = "" (root)
+    var BASE = (function () {
+      var p = window.location.pathname;
+      // Normalise: strip trailing slashes
+      p = p.replace(/\/+$/, "");
+      // For "/", make it empty string
+      if (p === "") return "";
+      // For "/jobdash" or "/jobdash/index.html", keep first segment
+      // If served exactly at "/jobdash", p is "/jobdash"
+      return p;
+    })();
+
     // Globals
     var sortCol = "startTime";
     var sortDir = "desc";
     var paused = false;
     var statusFilter = "";
     var adminTokenCache = "";   // cached successful admin token per page session
+
+    // Build API URL with base path
+    function apiUrl(pathAndQuery) {
+      // Ensure leading slash
+      if (pathAndQuery.charAt(0) !== "/") {
+        pathAndQuery = "/" + pathAndQuery;
+      }
+      if (!BASE) return pathAndQuery;
+      return BASE + pathAndQuery;
+    }
 
     // Format DATETIME / ISO strings as local date+time
     function formatDateTime(v){
@@ -115,7 +139,7 @@
       var msg = "Delete job " + jobID + " with status '" + statusText + "' from the queue?";
       if (!confirm(msg)) return;
 
-      fetch("/api/jobs/" + encodeURIComponent(jobID), {
+      fetch(apiUrl("/api/jobs/" + encodeURIComponent(jobID)), {
         method: "DELETE",
         headers: {
           "x-admin-token": token
@@ -173,8 +197,8 @@
     }
 
     function refreshNow(){
-      var url = "/api/jobs?sort=" +
-                encodeURIComponent(sortCol + ":" + sortDir) +
+      var url = apiUrl("/api/jobs") +
+                "?sort=" + encodeURIComponent(sortCol + ":" + sortDir) +
                 "&limit=500";
       if (statusFilter) {
         url += "&status=" + encodeURIComponent(statusFilter);
@@ -199,7 +223,7 @@
         })
         .catch(function(){
           document.getElementById("tbody").innerHTML =
-            "<tr><td colspan=\"8\">Failed to fetch /api/jobs</td></tr>";
+            "<tr><td colspan=\"8\">Failed to fetch " + apiUrl("/api/jobs") + "</td></tr>";
         });
     }
 
@@ -210,13 +234,13 @@
   </script>
 </head>
 <body>
-  <h1>Job Queue
+  <h1>
+    <span style="color: orange;">n8n Job Queue</span>
     <span class="right">
       <button onclick="paused=!paused; this.textContent = paused? 'Resume':'Pause'; schedule()">Pause</button>
       <button onclick="manualRefresh()">Refresh</button>
     </span>
   </h1>
-
   <div class="bar">
     Refresh(s): <input id="r" type="number" min="2" value="5" onchange="schedule()" style="width:70px">
     Status:

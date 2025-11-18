@@ -15,6 +15,16 @@ const dbConfig = {
   timezone: "Z",
 };
 
+// Optional base path for mounting under a sub-path (e.g. /jobdash)
+let BASE_PATH = (process.env.BASE_PATH || "").trim();
+if (BASE_PATH && !BASE_PATH.startsWith("/")) {
+  BASE_PATH = "/" + BASE_PATH;
+}
+BASE_PATH = BASE_PATH.replace(/\/+$/, "");
+if (BASE_PATH === "/") {
+  BASE_PATH = "";
+}
+
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 
 const pool = mysql.createPool(dbConfig);
@@ -64,20 +74,32 @@ async function ensureSchemaAndSeed() {
 
 // ---------- Express app ----------
 const app = express();
-app.use(express.static(__dirname));
 
-// Health
-app.get("/api/health", async (_req, res) => {
+// Serve static assets at root (for direct access)…
+app.use(express.static(__dirname));
+// …and optionally under the base path, if configured (e.g. /jobdash)
+if (BASE_PATH) {
+  app.use(BASE_PATH, express.static(__dirname));
+}
+
+// Helper to prefix routes with BASE_PATH when needed
+function withBase(p) {
+  if (!BASE_PATH) return p;
+  return BASE_PATH + p;
+}
+
+// Health handler
+async function healthHandler(_req, res) {
   try {
     const [rows] = await pool.query("SELECT 1 AS ok");
     res.json({ ok: true, db: rows[0] && rows[0].ok === 1 });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e) });
   }
-});
+}
 
-// List jobs
-app.get("/api/jobs", async (req, res) => {
+// Jobs handler
+async function jobsHandler(req, res) {
   try {
     const status = req.query.status || "";
     const limit = Math.min(
@@ -122,10 +144,10 @@ app.get("/api/jobs", async (req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e) });
   }
-});
+}
 
-// Delete a job (admin only)
-app.delete("/api/jobs/:id", async (req, res) => {
+// Delete handler (admin only)
+async function deleteJobHandler(req, res) {
   try {
     const token = req.header("x-admin-token") || "";
     if (!ADMIN_TOKEN || token !== ADMIN_TOKEN) {
@@ -145,18 +167,35 @@ app.delete("/api/jobs/:id", async (req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e) });
   }
-});
+}
 
-// Main page
-app.get("/", (_req, res) => {
+// Index handler
+function indexHandler(_req, res) {
   res.sendFile(path.join(__dirname, "index.html"));
-});
+}
+
+// Register routes for both root and optional BASE_PATH
+app.get("/api/health", healthHandler);
+app.get("/api/jobs", jobsHandler);
+app.delete("/api/jobs/:id", deleteJobHandler);
+app.get("/", indexHandler);
+
+if (BASE_PATH) {
+  app.get(withBase("/api/health"), healthHandler);
+  app.get(withBase("/api/jobs"), jobsHandler);
+  app.delete(withBase("/api/jobs/:id"), deleteJobHandler);
+  app.get(withBase("/"), indexHandler);
+}
 
 // ---------- Startup ----------
 ensureSchemaAndSeed()
   .then(() => {
     app.listen(PORT, () => {
-      console.log("jobdash listening on http://0.0.0.0:" + PORT);
+      console.log(
+        "jobdash listening on http://0.0.0.0:" +
+          PORT +
+          (BASE_PATH ? " (base path: " + BASE_PATH + ")" : "")
+      );
     });
   })
   .catch((e) => {
