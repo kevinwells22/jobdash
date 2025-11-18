@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Job Queue</title>
+  <style>
+    :root{--bg:#0f172a;--bg2:#0b1220;--text:#e5e7eb;--line:#1f2937}
+    body{
+      font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+      background:var(--bg);
+      color:var(--text);
+      margin:0;
+      padding:20px
+    }
+    h1{margin:0 0 10px;font-size:20px}
+    .bar{
+      display:flex;
+      gap:12px;
+      align-items:center;
+      margin:10px 0 16px
+    }
+    input,select,button{
+      background:#111827;
+      color:var(--text);
+      border:1px solid var(--line);
+      border-radius:6px;
+      padding:6px 8px
+    }
+    button{cursor:pointer}
+    table{width:100%;border-collapse:collapse}
+    th,td{
+      padding:8px 10px;
+      border-bottom:1px solid var(--line)
+    }
+    th{
+      background:var(--bg2);
+      cursor:pointer;
+      text-align:left
+    }
+    .meta{opacity:.8;font-size:12px;margin-bottom:8px}
+    .right{float:right}
+    code{
+      background:#111827;
+      border:1px solid var(--line);
+      padding:2px 6px;
+      border-radius:4px
+    }
+    .status-cell{
+      cursor:pointer;
+      text-decoration:underline;
+      text-decoration-style:dotted;
+    }
+  </style>
+  <script>
+    // Globals
+    var sortCol = "startTime";
+    var sortDir = "desc";
+    var paused = false;
+    var statusFilter = "";
+    var adminTokenCache = "";   // cached successful admin token per page session
+
+    // Format DATETIME / ISO strings as local date+time
+    function formatDateTime(v){
+      if (!v) return "";
+      var d = new Date(v);
+      if (isNaN(d.getTime())) {
+        var s = String(v).replace(" ", "T");
+        d = new Date(s);
+      }
+      if (isNaN(d.getTime())) return String(v);
+      return d.toLocaleString();
+    }
+
+    function setSort(c){
+      if (c === sortCol) {
+        sortDir = (sortDir === "asc" ? "desc" : "asc");
+      } else {
+        sortCol = c;
+        sortDir = "asc";
+      }
+      refreshNow();
+    }
+
+    function setStatus(sel){
+      statusFilter = sel.value || "";
+      refreshNow();
+    }
+
+    function manualRefresh(){ refreshNow(); }
+
+    function schedule(){
+      var t = document.getElementById("r");
+      var sec = Math.max(2, parseInt(t.value || "5", 10));
+      window.clearInterval(window._timer);
+      if (!paused){
+        window._timer = window.setInterval(function(){ refreshNow(); }, sec*1000);
+      }
+    }
+
+    function getAdminTokenForDelete(jobID){
+      if (adminTokenCache) return adminTokenCache;
+      var token = prompt("Admin password required to delete job " + jobID + ":");
+      if (!token) return null;
+      adminTokenCache = token;
+      return token;
+    }
+
+    function onStatusClick(jobID, statusText){
+      if (!jobID) return;
+
+      var token = getAdminTokenForDelete(jobID);
+      if (!token) return;
+
+      var msg = "Delete job " + jobID + " with status '" + statusText + "' from the queue?";
+      if (!confirm(msg)) return;
+
+      fetch("/api/jobs/" + encodeURIComponent(jobID), {
+        method: "DELETE",
+        headers: {
+          "x-admin-token": token
+        }
+      })
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          if (!data.ok) {
+            if (data.error === "Forbidden") {
+              adminTokenCache = "";
+              alert("Not authorised: admin password is incorrect.");
+            } else {
+              alert("Delete failed: " + (data.error || "unknown error"));
+            }
+          } else {
+            refreshNow();
+          }
+        })
+        .catch(function(err){
+          alert("Delete failed: " + err);
+        });
+    }
+
+    function renderRows(data){
+      var tbody = document.getElementById("tbody");
+      tbody.innerHTML = ""; // rebuild in sorted order
+
+      for (var i = 0; i < data.rows.length; i++) {
+        var r = data.rows[i];
+        var tr = document.createElement("tr");
+
+        function td(text){
+          var cell = document.createElement("td");
+          cell.textContent = (text == null ? "" : String(text));
+          tr.appendChild(cell);
+          return cell;
+        }
+
+        // Visible columns in this order:
+        // jobID, wo_no_sec, wo_desc, task_desc, startTime, endTime, currentWorkflow, status
+        td(r.jobID);
+        td(r.wo_no_sec || "");                          // Media Order Number
+        td(r.wo_desc || "");                            // Media Order Name
+        td(r.task_desc || "");                          // Operation Name
+        td(formatDateTime(r.startTime));                // Start Time
+        td(formatDateTime(r.endTime));                  // End Time
+        td(r.currentWorkflow || "");                    // Current Workflow
+        var statusTd = td(r.status || "");              // Status
+        statusTd.className = "status-cell";
+        statusTd.onclick = (function(jobIdCopy, statusCopy){
+          return function(){ onStatusClick(jobIdCopy, statusCopy); };
+        })(r.jobID, r.status || "");
+        tbody.appendChild(tr);
+      }
+    }
+
+    function refreshNow(){
+      var url = "/api/jobs?sort=" +
+                encodeURIComponent(sortCol + ":" + sortDir) +
+                "&limit=500";
+      if (statusFilter) {
+        url += "&status=" + encodeURIComponent(statusFilter);
+      }
+
+      var t0 = Date.now();
+      fetch(url, { cache: "no-store" })
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          var t1 = Date.now();
+          if (!data.ok) {
+            document.getElementById("tbody").innerHTML =
+              "<tr><td colspan=\"8\">API error</td></tr>";
+            return;
+          }
+          renderRows(data);
+          var meta = document.getElementById("meta");
+          meta.textContent = data.count + " rows • sorted by " +
+            sortCol + ":" + sortDir + " • " +
+            new Date().toLocaleTimeString() + " • " +
+            (t1 - t0) + "ms";
+        })
+        .catch(function(){
+          document.getElementById("tbody").innerHTML =
+            "<tr><td colspan=\"8\">Failed to fetch /api/jobs</td></tr>";
+        });
+    }
+
+    window.onload = function(){
+      schedule();
+      refreshNow();
+    };
+  </script>
+</head>
+<body>
+  <h1>Job Queue
+    <span class="right">
+      <button onclick="paused=!paused; this.textContent = paused? 'Resume':'Pause'; schedule()">Pause</button>
+      <button onclick="manualRefresh()">Refresh</button>
+    </span>
+  </h1>
+
+  <div class="bar">
+    Refresh(s): <input id="r" type="number" min="2" value="5" onchange="schedule()" style="width:70px">
+    Status:
+    <select id="statusSel" onchange="setStatus(this)">
+      <option value="">All</option>
+      <option value="queued">queued</option>
+      <option value="running">running</option>
+      <option value="success">success</option>
+      <option value="error">error</option>
+      <option value="cancelled">cancelled</option>
+    </select>
+  </div>
+
+  <div id="meta" class="meta">Loading…</div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr>
+        <th onclick="setSort('jobID')">Job ID</th>
+        <th onclick="setSort('wo_no_sec')">Media Order Number</th>
+        <th onclick="setSort('wo_desc')">Media Order Name</th>
+        <th onclick="setSort('task_desc')">Operation Name</th>
+        <th onclick="setSort('startTime')">Start Time</th>
+        <th onclick="setSort('endTime')">End Time</th>
+        <th onclick="setSort('currentWorkflow')">Current Workflow</th>
+        <th onclick="setSort('status')">Status</th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</body>
+</html>

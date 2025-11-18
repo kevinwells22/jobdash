@@ -1,0 +1,11 @@
+{
+  "name": "jobdash",
+  "version": "1.0.0",
+  "private": true,
+  "main": "server.js",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "express": "^4.19.2",
+    "mysql2": "^3.11.3"
+  }
+}

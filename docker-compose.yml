@@ -1,0 +1,41 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: jobdash-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: jobdash
+      MYSQL_USER: jobdash
+      MYSQL_PASSWORD: jobdashpass
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+    ports:
+      - "0.0.0.0:3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prootpass"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  web:
+    build: ./web
+    container_name: jobdash-web
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: "db"
+      DB_PORT: "3306"
+      DB_USER: "jobdash"
+      DB_PASS: "jobdashpass"
+      DB_NAME: "jobdash"
+      # CHANGE THIS to a long random string and share only with admins
+      ADMIN_TOKEN: "Bluray601"
+    ports:
+      - "0.0.0.0:8080:8080"
+
+volumes:
+  mysql-data:
