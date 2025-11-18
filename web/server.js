@@ -1,6 +1,7 @@
 const express = require("express");
 const mysql = require("mysql2/promise");
 const path = require("path");
+const fs = require("fs");
 
 // ---------- Config ----------
 const PORT = parseInt(process.env.PORT || "8080", 10);
@@ -25,6 +26,9 @@ if (BASE_PATH === "/") {
   BASE_PATH = "";
 }
 
+// Version string for display
+const VERSION = process.env.VERSION || "dev";
+
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 
 const pool = mysql.createPool(dbConfig);
@@ -33,12 +37,11 @@ const pool = mysql.createPool(dbConfig);
 async function ensureSchemaAndSeed() {
   const conn = await pool.getConnection();
   try {
-    // New schema for job_queue
     await conn.query(
       "CREATE TABLE IF NOT EXISTS job_queue (" +
         "jobID BIGINT PRIMARY KEY," +
-        "wo_no_sec VARCHAR(64) NOT NULL," +                        // media order number
-        "wo_desc VARCHAR(255) NOT NULL," +                         // media order name/description
+        "wo_no_sec VARCHAR(64) NOT NULL," +
+        "wo_desc VARCHAR(255) NOT NULL," +
         "service_ro_no VARCHAR(64) NULL," +
         "operation_no VARCHAR(64) NULL," +
         "task_desc VARCHAR(255) NULL," +
@@ -53,7 +56,6 @@ async function ensureSchemaAndSeed() {
       ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
     );
 
-    // Seed some example rows if empty
     const [rows] = await conn.query("SELECT COUNT(*) AS c FROM job_queue");
     const count = rows[0] && rows[0].c ? parseInt(rows[0].c, 10) : 0;
 
@@ -75,14 +77,13 @@ async function ensureSchemaAndSeed() {
 // ---------- Express app ----------
 const app = express();
 
-// Serve static assets at root (for direct access)…
-app.use(express.static(__dirname));
-// …and optionally under the base path, if configured (e.g. /jobdash)
+// Serve static assets but DO NOT auto-serve index.html
+app.use(express.static(__dirname, { index: false }));
 if (BASE_PATH) {
-  app.use(BASE_PATH, express.static(__dirname));
+  app.use(BASE_PATH, express.static(__dirname, { index: false }));
 }
 
-// Helper to prefix routes with BASE_PATH when needed
+// Helper
 function withBase(p) {
   if (!BASE_PATH) return p;
   return BASE_PATH + p;
@@ -110,7 +111,6 @@ async function jobsHandler(req, res) {
     let sort = req.query.sort || "startTime:desc";
     let [sortCol, sortDir] = String(sort).split(":");
 
-    // Allow sorting on columns we care about in UI
     const allowed = {
       jobID: 1,
       wo_no_sec: 1,
@@ -146,7 +146,7 @@ async function jobsHandler(req, res) {
   }
 }
 
-// Delete handler (admin only)
+// Delete handler
 async function deleteJobHandler(req, res) {
   try {
     const token = req.header("x-admin-token") || "";
@@ -169,17 +169,21 @@ async function deleteJobHandler(req, res) {
   }
 }
 
-// Index handler
+// Index handler with VERSION injection
 function indexHandler(_req, res) {
-  res.sendFile(path.join(__dirname, "index.html"));
+  let html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+  html = html.replace(/%%VERSION%%/g, VERSION);
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(html);
 }
 
-// Register routes for both root and optional BASE_PATH
+// Routes for root
 app.get("/api/health", healthHandler);
 app.get("/api/jobs", jobsHandler);
 app.delete("/api/jobs/:id", deleteJobHandler);
 app.get("/", indexHandler);
 
+// Routes for BASE_PATH (e.g. /jobdash)
 if (BASE_PATH) {
   app.get(withBase("/api/health"), healthHandler);
   app.get(withBase("/api/jobs"), jobsHandler);
@@ -194,7 +198,8 @@ ensureSchemaAndSeed()
       console.log(
         "jobdash listening on http://0.0.0.0:" +
           PORT +
-          (BASE_PATH ? " (base path: " + BASE_PATH + ")" : "")
+          (BASE_PATH ? " (base path: " + BASE_PATH + ")" : "") +
+          " version=" + VERSION
       );
     });
   })
