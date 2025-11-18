@@ -20,12 +20,12 @@ services:
       retries: 30
 
   web:
-    build: ./web
+    image: ghcr.io/kevinwells22/jobdash-custom:1.0.0
     container_name: jobdash-web
     restart: unless-stopped
     depends_on:
       db:
-        condition: service_healthy
+	condition: service_healthy
     environment:
       DB_HOST: "db"
       DB_PORT: "3306"
